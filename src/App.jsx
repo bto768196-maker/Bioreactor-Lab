@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, setDoc, updateDoc } from "firebase/firestore";
+import { getFirestore, doc, setDoc, updateDoc, arrayUnion } from "firebase/firestore";
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  CONFIG
@@ -82,10 +82,14 @@ function LandingForm({ onAccessGranted }) {
 
   useEffect(() => {
     if (!submitted) return;
+    const startTime = Date.now();
     const log = () => {
       if (!sessionKeyRef.current) return;
+      const endTime = Date.now();
+      const durationMin = ((endTime - startTime) / 60000).toFixed(2);
       updateDoc(doc(db, "sessions", sessionKeyRef.current), {
-        "Exit Time": new Date().toISOString()
+        "Exit Time": new Date().toISOString(),
+        "Current Session Duration (min)": durationMin
       }).catch(() => { });
     };
     window.addEventListener("beforeunload", log);
@@ -127,11 +131,13 @@ function LandingForm({ onAccessGranted }) {
       "Course Name": form.courseName.trim(),
       "Course Code": form.courseCode.trim(),
       "PIN": form.pin.trim(),
-      "Entry Time": entryTime,
+      "Last Entry Time": entryTime,
       "Exit Time": "",
-      "Duration (min)": "",
+      "Current Session Duration (min)": "0.00",
       "IP Address": ipAddress,
-      "Session Key": sessionKey
+      "Session Key": sessionKey,
+      "Latest Trial": null,
+      "Trials History": []
     }).catch(() => { });
 
     setStatus("success");
@@ -1576,7 +1582,7 @@ function pickRandomSpecies() {
 }
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
-function BioreactorSim() {
+function BioreactorSim({ sessionKey }) {
   const [species, setSpecies] = useState(() => pickRandomSpecies());
   const [round, setRound] = useState(1);
   const bacterium = BACTERIA[species];
@@ -1903,6 +1909,27 @@ function BioreactorSim() {
     }, 1000);
     return () => clearInterval(iv);
   }, [phase, species, addAlert]);
+
+  // ── FIREBASE TRIAL EXPORT ──
+  useEffect(() => {
+    if ((phase === "won" || phase === "dead") && sessionKey) {
+      const trialData = {
+        trialId: round,
+        organism: species,
+        outcome: phase === "won" ? "SURVIVED" : "DEAD",
+        secondsSurvived: 300 - timeLeft,
+        totalScore: score,
+        healthAtEnd: health.toFixed(1) + "%",
+        densityReached: density.toFixed(1) + "%",
+        timeCompleted: new Date().toISOString()
+      };
+
+      updateDoc(doc(db, "sessions", sessionKey), {
+        "Latest Trial": trialData,
+        "Trials History": arrayUnion(trialData)
+      }).catch(err => console.error("Firebase Export Error:", err));
+    }
+  }, [phase, sessionKey]);
 
   useEffect(() => { setGrowthPhase(getGrowthPhase(density, health, cultureAge)); }, [density, health, cultureAge]);
   useEffect(() => {
@@ -2381,12 +2408,12 @@ function BioreactorSim() {
 // ══════════════════════════════════════════════════════════════════════════════
 //  ROOT APP — landing gate → platform
 // ══════════════════════════════════════════════════════════════════════════════
-function BioreactorSimulator({ studentName }) {
-  return <BioreactorSim />;
+function BioreactorSimulator({ studentName, sessionKey }) {
+  return <BioreactorSim sessionKey={sessionKey} />;
 }
 
 export default function App() {
   const [session, setSession] = useState(null);
   if (!session) return <LandingForm onAccessGranted={setSession} />;
-  return <BioreactorSimulator studentName={session.name} />;
+  return <BioreactorSimulator studentName={session.name} sessionKey={session.sessionKey} />;
 }
