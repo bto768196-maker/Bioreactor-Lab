@@ -104,23 +104,46 @@ function LandingForm({ onAccessGranted }) {
   const [submitted, setSubmitted] = useState(false);
   const sessionKeyRef = useRef(null);
 
-  // Fetch geo-IP location data silently in background
+  // Determine trial type: "reset" if user clicked RESET, otherwise "new_session"
+  const [trialType] = useState(() => {
+    const stored = sessionStorage.getItem("bioreactor_trialType");
+    sessionStorage.removeItem("bioreactor_trialType"); // consume the flag
+    return stored || "new_session";
+  });
+
+  // Fetch geo-IP location data silently in background (HTTPS endpoint)
   useEffect(() => {
-    fetch("http://ip-api.com/json/?fields=query,country,city,lat,lon")
+    fetch("https://ipapi.co/json/")
       .then(r => r.json())
-      .then(d => setLocationData({
-        ip: d.query || "unknown",
-        country: d.country || "",
-        city: d.city || "",
-        latitude: String(d.lat || ""),
-        longitude: String(d.lon || ""),
-      }))
+      .then(d => {
+        if (d && d.ip) {
+          setLocationData({
+            ip: d.ip || "unknown",
+            country: d.country_name || d.country || "",
+            city: d.city || "",
+            latitude: String(d.latitude || ""),
+            longitude: String(d.longitude || ""),
+          });
+        } else { throw new Error("Invalid response"); }
+      })
       .catch(() => {
-        // Fallback to IP-only service
-        fetch("https://api.ipify.org?format=json")
+        // Fallback: try ipwho.is (also HTTPS)
+        fetch("https://ipwho.is/")
           .then(r => r.json())
-          .then(d => setLocationData(prev => ({ ...prev, ip: d.ip })))
-          .catch(() => { });
+          .then(d => setLocationData({
+            ip: d.ip || "unknown",
+            country: d.country || "",
+            city: d.city || "",
+            latitude: String(d.latitude || ""),
+            longitude: String(d.longitude || ""),
+          }))
+          .catch(() => {
+            // Last resort: IP only
+            fetch("https://api.ipify.org?format=json")
+              .then(r => r.json())
+              .then(d => setLocationData(prev => ({ ...prev, ip: d.ip })))
+              .catch(() => { });
+          });
       });
   }, []);
 
@@ -199,6 +222,7 @@ function LandingForm({ onAccessGranted }) {
         pin_code: enteredPin,
         student_id: form.studentId.trim(),
         attempt_number: newUsageCount,
+        trial_type: trialType,
         attempt_type: "new_session",
         timestamp: attemptTimestamp,
         location: { ...locationData },
@@ -242,6 +266,7 @@ function LandingForm({ onAccessGranted }) {
       pin: enteredPin,
       studentId: form.studentId.trim(),
       locationData: { ...locationData },
+      trialType,
     }), 2400);
   };
 
@@ -1682,7 +1707,7 @@ function pickRandomSpecies() {
 }
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
-function BioreactorSim({ sessionKey, onReset }) {
+function BioreactorSim({ sessionKey, onReset, trialType = "new_session" }) {
   const [species, setSpecies] = useState(() => pickRandomSpecies());
   const [round, setRound] = useState(1);
   const bacterium = BACTERIA[species];
@@ -2015,6 +2040,7 @@ function BioreactorSim({ sessionKey, onReset }) {
     if ((phase === "won" || phase === "dead") && sessionKey) {
       const trialData = {
         trialId: round,
+        trialType: trialType,
         organism: species,
         outcome: phase === "won" ? "SURVIVED" : "DEAD",
         secondsSurvived: 300 - timeLeft,
@@ -2508,7 +2534,7 @@ function BioreactorSim({ sessionKey, onReset }) {
 // ══════════════════════════════════════════════════════════════════════════════
 //  ROOT APP — landing gate → platform
 // ══════════════════════════════════════════════════════════════════════════════
-function BioreactorSimulator({ studentName, sessionKey, pin, studentId, locationData }) {
+function BioreactorSimulator({ studentName, sessionKey, pin, studentId, locationData, trialType }) {
   const [blocked, setBlocked] = useState(false);
 
   const handleReset = async () => {
@@ -2540,14 +2566,14 @@ function BioreactorSimulator({ studentName, sessionKey, pin, studentId, location
         // Fetch fresh location data for reset attempt
         let freshLocation = locationData || { ip: "unknown", country: "", city: "", latitude: "", longitude: "" };
         try {
-          const geoRes = await fetch("http://ip-api.com/json/?fields=query,country,city,lat,lon");
+          const geoRes = await fetch("https://ipapi.co/json/");
           const geoData = await geoRes.json();
           freshLocation = {
-            ip: geoData.query || freshLocation.ip,
-            country: geoData.country || freshLocation.country,
+            ip: geoData.ip || freshLocation.ip,
+            country: geoData.country_name || geoData.country || freshLocation.country,
             city: geoData.city || freshLocation.city,
-            latitude: String(geoData.lat || freshLocation.latitude),
-            longitude: String(geoData.lon || freshLocation.longitude),
+            latitude: String(geoData.latitude || freshLocation.latitude),
+            longitude: String(geoData.longitude || freshLocation.longitude),
           };
         } catch { /* use cached location */ }
 
@@ -2565,6 +2591,8 @@ function BioreactorSimulator({ studentName, sessionKey, pin, studentId, location
       console.error("Reset attempt tracking error:", err);
     }
 
+    // Set sessionStorage flag so next load knows this is a "reset" trial
+    sessionStorage.setItem("bioreactor_trialType", "reset");
     // Reload the page to reset the simulation
     window.location.reload();
   };
@@ -2600,7 +2628,7 @@ function BioreactorSimulator({ studentName, sessionKey, pin, studentId, location
     );
   }
 
-  return <BioreactorSim sessionKey={sessionKey} onReset={handleReset} />;
+  return <BioreactorSim sessionKey={sessionKey} onReset={handleReset} trialType={trialType} />;
 }
 
 export default function App() {
@@ -2613,6 +2641,7 @@ export default function App() {
       pin={session.pin}
       studentId={session.studentId}
       locationData={session.locationData}
+      trialType={session.trialType}
     />
   );
 }
