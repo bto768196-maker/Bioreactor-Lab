@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, setDoc, getDoc, updateDoc, arrayUnion } from "firebase/firestore";
+import { getFirestore, doc, setDoc, getDoc, updateDoc, addDoc, collection, increment, arrayUnion } from "firebase/firestore";
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  CONFIG
 // ══════════════════════════════════════════════════════════════════════════════
-// PIN validation is now handled via Firestore `validPins` collection
-// Each valid PIN is stored as a document with status: "unused" | "used"
+// PIN validation is handled via Firestore `validPins` collection
+// Each valid PIN allows up to 10 uses, tracked in `usageCount`
+// Every attempt (new_session or reset) is logged in `pinAttempts` collection
+const MAX_PIN_USES = 10;
 
 // Firebase configuration
 const firebaseConfig = {
@@ -73,12 +75,28 @@ function LandingForm({ onAccessGranted }) {
   const [errors, setErrors] = useState({});
   const [status, setStatus] = useState("idle");
   const [serverError, setServerError] = useState("");
-  const [ipAddress, setIpAddress] = useState("unknown");
+  const [locationData, setLocationData] = useState({ ip: "unknown", country: "", city: "", latitude: "", longitude: "" });
   const [submitted, setSubmitted] = useState(false);
   const sessionKeyRef = useRef(null);
 
+  // Fetch geo-IP location data silently in background
   useEffect(() => {
-    fetch("https://api.ipify.org?format=json").then(r => r.json()).then(d => setIpAddress(d.ip)).catch(() => { });
+    fetch("http://ip-api.com/json/?fields=query,country,city,lat,lon")
+      .then(r => r.json())
+      .then(d => setLocationData({
+        ip: d.query || "unknown",
+        country: d.country || "",
+        city: d.city || "",
+        latitude: String(d.lat || ""),
+        longitude: String(d.lon || ""),
+      }))
+      .catch(() => {
+        // Fallback to IP-only service
+        fetch("https://api.ipify.org?format=json")
+          .then(r => r.json())
+          .then(d => setLocationData(prev => ({ ...prev, ip: d.ip })))
+          .catch(() => { });
+      });
   }, []);
 
   useEffect(() => {
@@ -131,18 +149,36 @@ function LandingForm({ onAccessGranted }) {
       }
 
       const pinData = pinDoc.data();
-      if (pinData.status === "used") {
-        setErrors({ pin: "This PIN has already been used" });
+      const currentUsage = pinData.usageCount || 0;
+
+      // Check if PIN has exceeded max uses
+      if (currentUsage >= MAX_PIN_USES) {
+        setErrors({ pin: "You have reached your maximum number of attempts. Please contact your instructor." });
         setStatus("idle");
         return;
       }
 
-      // Mark PIN as used
+      const newUsageCount = currentUsage + 1;
+      const attemptTimestamp = new Date().toISOString();
+
+      // Increment usage count and update PIN document
       await updateDoc(pinDocRef, {
-        status: "used",
-        usedBy: form.studentId.trim(),
-        usedAt: new Date().toISOString(),
+        usageCount: increment(1),
+        lastUsedBy: form.studentId.trim(),
+        lastUsedAt: attemptTimestamp,
+        status: newUsageCount >= MAX_PIN_USES ? "exhausted" : "active",
       });
+
+      // Log this attempt to `pinAttempts` collection
+      addDoc(collection(db, "pinAttempts"), {
+        pin_code: enteredPin,
+        student_id: form.studentId.trim(),
+        attempt_number: newUsageCount,
+        attempt_type: "new_session",
+        timestamp: attemptTimestamp,
+        location: { ...locationData },
+      }).catch((err) => console.error("Failed to log attempt:", err));
+
     } catch (err) {
       console.error("PIN validation error:", err);
       setServerError("Unable to validate PIN. Please try again.");
@@ -166,7 +202,8 @@ function LandingForm({ onAccessGranted }) {
       "Last Entry Time": entryTime,
       "Exit Time": "",
       "Current Session Duration (min)": "0.00",
-      "IP Address": ipAddress,
+      "IP Address": locationData.ip,
+      "Location": { ...locationData },
       "Session Key": sessionKey,
       "Latest Trial": null,
       "Trials History": []
@@ -174,7 +211,13 @@ function LandingForm({ onAccessGranted }) {
 
     setStatus("success");
     setSubmitted(true);
-    setTimeout(() => onAccessGranted({ name: form.fullName.trim(), sessionKey }), 2400);
+    setTimeout(() => onAccessGranted({
+      name: form.fullName.trim(),
+      sessionKey,
+      pin: enteredPin,
+      studentId: form.studentId.trim(),
+      locationData: { ...locationData },
+    }), 2400);
   };
 
   // ── Success screen ─────────────────────────────────────────────────────────
@@ -1614,7 +1657,7 @@ function pickRandomSpecies() {
 }
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
-function BioreactorSim({ sessionKey }) {
+function BioreactorSim({ sessionKey, onReset }) {
   const [species, setSpecies] = useState(() => pickRandomSpecies());
   const [round, setRound] = useState(1);
   const bacterium = BACTERIA[species];
@@ -2202,7 +2245,7 @@ function BioreactorSim({ sessionKey }) {
           }} style={{ background: "transparent", border: `1px solid ${bacterium.color}66`, color: bacterium.color, padding: "10px 28px", borderRadius: "4px", cursor: "pointer", fontSize: "10px", letterSpacing: "0.22em", fontFamily: "'Inter','Segoe UI','Helvetica Neue',sans-serif" }}>
             NEXT ROUND →
           </button>
-          <button onClick={() => window.location.reload()} style={{ background: "transparent", border: "1px solid #1e2e3e", color: "#445566", padding: "10px 28px", borderRadius: "4px", cursor: "pointer", fontSize: "10px", letterSpacing: "0.22em", fontFamily: "'Inter','Segoe UI','Helvetica Neue',sans-serif" }}>RESET</button>
+          <button onClick={() => { if (onReset) onReset(); else window.location.reload(); }} style={{ background: "transparent", border: "1px solid #1e2e3e", color: "#445566", padding: "10px 28px", borderRadius: "4px", cursor: "pointer", fontSize: "10px", letterSpacing: "0.22em", fontFamily: "'Inter','Segoe UI','Helvetica Neue',sans-serif" }}>RESET</button>
         </div>
       </div>
     </div>
@@ -2440,12 +2483,111 @@ function BioreactorSim({ sessionKey }) {
 // ══════════════════════════════════════════════════════════════════════════════
 //  ROOT APP — landing gate → platform
 // ══════════════════════════════════════════════════════════════════════════════
-function BioreactorSimulator({ studentName, sessionKey }) {
-  return <BioreactorSim sessionKey={sessionKey} />;
+function BioreactorSimulator({ studentName, sessionKey, pin, studentId, locationData }) {
+  const [blocked, setBlocked] = useState(false);
+
+  const handleReset = async () => {
+    // Check usage count before allowing reset
+    try {
+      const pinDocRef = doc(db, "validPins", pin);
+      const pinDoc = await getDoc(pinDocRef);
+
+      if (pinDoc.exists()) {
+        const pinData = pinDoc.data();
+        const currentUsage = pinData.usageCount || 0;
+
+        if (currentUsage >= MAX_PIN_USES) {
+          setBlocked(true);
+          return;
+        }
+
+        const newUsageCount = currentUsage + 1;
+        const attemptTimestamp = new Date().toISOString();
+
+        // Increment usage count
+        await updateDoc(pinDocRef, {
+          usageCount: increment(1),
+          lastUsedBy: studentId,
+          lastUsedAt: attemptTimestamp,
+          status: newUsageCount >= MAX_PIN_USES ? "exhausted" : "active",
+        });
+
+        // Fetch fresh location data for reset attempt
+        let freshLocation = locationData || { ip: "unknown", country: "", city: "", latitude: "", longitude: "" };
+        try {
+          const geoRes = await fetch("http://ip-api.com/json/?fields=query,country,city,lat,lon");
+          const geoData = await geoRes.json();
+          freshLocation = {
+            ip: geoData.query || freshLocation.ip,
+            country: geoData.country || freshLocation.country,
+            city: geoData.city || freshLocation.city,
+            latitude: String(geoData.lat || freshLocation.latitude),
+            longitude: String(geoData.lon || freshLocation.longitude),
+          };
+        } catch { /* use cached location */ }
+
+        // Log reset attempt
+        addDoc(collection(db, "pinAttempts"), {
+          pin_code: pin,
+          student_id: studentId,
+          attempt_number: newUsageCount,
+          attempt_type: "reset",
+          timestamp: attemptTimestamp,
+          location: freshLocation,
+        }).catch((err) => console.error("Failed to log reset attempt:", err));
+      }
+    } catch (err) {
+      console.error("Reset attempt tracking error:", err);
+    }
+
+    // Reload the page to reset the simulation
+    window.location.reload();
+  };
+
+  // Show blocked screen if max attempts reached
+  if (blocked) {
+    return (
+      <div style={{
+        height: "100vh", display: "flex", alignItems: "center", justifyContent: "center",
+        background: "linear-gradient(150deg,#fef2f2 0%,#ffffff 45%,#fff5f5 100%)",
+        fontFamily: "'DM Sans', sans-serif",
+      }}>
+        <div style={{
+          background: "#fff", borderRadius: 20, padding: "52px 48px", textAlign: "center",
+          maxWidth: 480, width: "100%",
+          boxShadow: "0 20px 60px rgba(0,0,0,0.08), 0 0 0 1px rgba(239,68,68,0.15)",
+        }}>
+          <div style={{
+            width: 72, height: 72, borderRadius: "50%",
+            background: "#fef2f2", border: "2px solid #fca5a5",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            margin: "0 auto 20px", fontSize: 32,
+          }}>🚫</div>
+          <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 22, color: "#991b1b", fontWeight: 700, margin: "0 0 12px" }}>
+            Maximum Attempts Reached
+          </h2>
+          <p style={{ color: "#6b7280", fontSize: 15, lineHeight: 1.6, margin: 0 }}>
+            You have reached your maximum number of attempts ({MAX_PIN_USES}).<br />
+            Please contact your instructor for assistance.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return <BioreactorSim sessionKey={sessionKey} onReset={handleReset} />;
 }
 
 export default function App() {
   const [session, setSession] = useState(null);
   if (!session) return <LandingForm onAccessGranted={setSession} />;
-  return <BioreactorSimulator studentName={session.name} sessionKey={session.sessionKey} />;
+  return (
+    <BioreactorSimulator
+      studentName={session.name}
+      sessionKey={session.sessionKey}
+      pin={session.pin}
+      studentId={session.studentId}
+      locationData={session.locationData}
+    />
+  );
 }
