@@ -158,7 +158,8 @@ function LandingForm({ onAccessGranted }) {
       const durationMin = ((endTime - startTime) / 60000).toFixed(2);
       updateDoc(doc(db, "sessions", sessionKeyRef.current), {
         "Exit Time": new Date().toISOString(),
-        "Current Session Duration (min)": durationMin
+        "Current Session Duration (min)": durationMin,
+        "overallExitTime": new Date().toISOString(),
       }).catch(() => { });
     };
     window.addEventListener("beforeunload", log);
@@ -278,6 +279,7 @@ function LandingForm({ onAccessGranted }) {
         "IP Address": locationData.ip,
         "Location": { ...locationData },
         "Session Key": sessionKey,
+        "overallExitTime": "",
         // Update student info in case it changed
         "Full Name": form.fullName.trim(),
         "University": form.university.trim(),
@@ -301,6 +303,8 @@ function LandingForm({ onAccessGranted }) {
         "IP Address": locationData.ip,
         "Location": { ...locationData },
         "Session Key": sessionKey,
+        "overallEntryTime": entryTime,
+        "overallExitTime": "",
         "Latest Trial": null,
         "Trials History": []
       }).catch(() => { });
@@ -315,6 +319,7 @@ function LandingForm({ onAccessGranted }) {
       studentId: form.studentId.trim(),
       locationData: { ...locationData },
       trialType,
+      entryTime,
     }), 2400);
   };
 
@@ -1755,7 +1760,8 @@ function pickRandomSpecies() {
 }
 
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
-function BioreactorSim({ sessionKey, onReset, trialType = "new_session" }) {
+function BioreactorSim({ sessionKey, onReset, trialType = "new_session", entryTime }) {
+  const trialEntryTimeRef = useRef(entryTime || new Date().toISOString());
   const [species, setSpecies] = useState(() => pickRandomSpecies());
   const [round, setRound] = useState(1);
   const bacterium = BACTERIA[species];
@@ -2086,21 +2092,30 @@ function BioreactorSim({ sessionKey, onReset, trialType = "new_session" }) {
   // ── FIREBASE TRIAL EXPORT ──
   useEffect(() => {
     if ((phase === "won" || phase === "dead") && sessionKey) {
+      const exitTime = new Date().toISOString();
+      const entryMs = new Date(trialEntryTimeRef.current).getTime();
+      const exitMs = new Date(exitTime).getTime();
+      const durationMin = ((exitMs - entryMs) / 60000).toFixed(2);
+
       const trialData = {
         trialId: round,
         trialType: trialType,
+        entryTime: trialEntryTimeRef.current,
+        exitTime: exitTime,
+        duration: `${durationMin} min`,
         organism: species,
         outcome: phase === "won" ? "SURVIVED" : "DEAD",
         secondsSurvived: 300 - timeLeft,
         totalScore: score,
         healthAtEnd: health.toFixed(1) + "%",
         densityReached: density.toFixed(1) + "%",
-        timeCompleted: new Date().toISOString()
+        timeCompleted: exitTime
       };
 
       updateDoc(doc(db, "sessions", sessionKey), {
         "Latest Trial": trialData,
-        "Trials History": arrayUnion(trialData)
+        "Trials History": arrayUnion(trialData),
+        "overallExitTime": exitTime,
       }).catch(err => console.error("Firebase Export Error:", err));
     }
   }, [phase, sessionKey]);
@@ -2582,8 +2597,28 @@ function BioreactorSim({ sessionKey, onReset, trialType = "new_session" }) {
 // ══════════════════════════════════════════════════════════════════════════════
 //  ROOT APP — landing gate → platform
 // ══════════════════════════════════════════════════════════════════════════════
-function BioreactorSimulator({ studentName, sessionKey, pin, studentId, locationData, trialType }) {
+function BioreactorSimulator({ studentName, sessionKey, pin, studentId, locationData, trialType, entryTime }) {
   const [blocked, setBlocked] = useState(false);
+
+  // ── Check PIN block status from Firebase on mount (works across all browsers) ──
+  useEffect(() => {
+    if (!pin) return;
+    (async () => {
+      try {
+        const pinDocRef = doc(db, "validPins", pin);
+        const pinDoc = await getDoc(pinDocRef);
+        if (pinDoc.exists()) {
+          const pinData = pinDoc.data();
+          const currentUsage = pinData.usageCount || 0;
+          if (currentUsage >= getMaxPinUses(pin)) {
+            setBlocked(true);
+          }
+        }
+      } catch (err) {
+        console.error("PIN block check error:", err);
+      }
+    })();
+  }, [pin]);
 
   const handleReset = async () => {
     // Check usage count before allowing reset
@@ -2676,7 +2711,7 @@ function BioreactorSimulator({ studentName, sessionKey, pin, studentId, location
     );
   }
 
-  return <BioreactorSim sessionKey={sessionKey} onReset={handleReset} trialType={trialType} />;
+  return <BioreactorSim sessionKey={sessionKey} onReset={handleReset} trialType={trialType} entryTime={entryTime} />;
 }
 
 export default function App() {
@@ -2690,6 +2725,7 @@ export default function App() {
       studentId={session.studentId}
       locationData={session.locationData}
       trialType={session.trialType}
+      entryTime={session.entryTime}
     />
   );
 }
