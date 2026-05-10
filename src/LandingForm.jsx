@@ -323,16 +323,15 @@ export default function LandingForm({ onAccessGranted }) {
                 <span style={{ fontSize: 10.5, fontWeight: 700, color: "#065f46", letterSpacing: "0.09em", fontFamily: "'DM Mono', monospace" }}>LAB SESSION ACCESS</span>
               </div>
             </div>
-            <div style={{ textAlign: "center", marginBottom: 20 }}>
-              <img src={`${import.meta.env.BASE_URL}bridge_logo.png`} alt="Bridge Capital Logo" style={{ height: 100, width: "auto", objectFit: "contain", marginBottom: 15 }} />
-            </div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20, marginBottom: 10 }}>
-              <img src={`${import.meta.env.BASE_URL}logo1.jpg`} alt="Logo 1" style={{ height: 50, width: "auto", objectFit: "contain" }} />
-              <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: "clamp(20px,3vw,28px)", fontWeight: 700, color: "#111827", margin: 0, textAlign: "center", flex: 1 }}>Student Sign-In</h1>
-              <div style={{ display: "flex", gap: 8 }}>
-                <img src={`${import.meta.env.BASE_URL}logo2.jpg`} alt="Logo 2" style={{ height: 40, width: "auto", objectFit: "contain" }} />
-                <img src={`${import.meta.env.BASE_URL}logo3.jpg`} alt="Logo 3" style={{ height: 40, width: "auto", objectFit: "contain" }} />
-              </div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 20, marginBottom: 10 }}>
+              <img 
+                src={`${import.meta.env.BASE_URL}bridge_logo.png`} 
+                alt="Bridge Capital Financial Solutions" 
+                style={{ height: 120, width: "auto", objectFit: "contain" }} 
+              />
+              <h1 style={{ fontFamily: "'Fraunces', serif", fontSize: "clamp(24px,4vw,32px)", fontWeight: 700, color: "#111827", margin: 0, textAlign: "center" }}>
+                Student Sign-In
+              </h1>
             </div>
             <p style={{ color: "#9ca3af", fontSize: 13.5, fontFamily: "'DM Sans', sans-serif", margin: 0, textAlign: "center" }}>All fields are required to access the simulator.</p>
           </div>
