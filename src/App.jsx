@@ -5,9 +5,9 @@ import { db } from "./firebase";
 // ══════════════════════════════════════════════════════════════════════════════
 //  CONFIG
 // ══════════════════════════════════════════════════════════════════════════════
-const MAX_PIN_USES = 10;
+const MAX_PIN_USES = 9999;
 const TEST_PIN = "TEST@1234!";
-const getMaxPinUses = (pin) => pin === TEST_PIN ? 1000 : MAX_PIN_USES;
+const getMaxPinUses = (pin) => MAX_PIN_USES;
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  BIOREACTOR PLATFORM
