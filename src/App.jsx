@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { doc, setDoc, getDoc, getDocs, updateDoc, addDoc, collection, query, where, increment, arrayUnion } from "firebase/firestore";
 import { db } from "./firebase";
+import LandingForm from "./LandingForm";
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  CONFIG
@@ -2177,16 +2178,8 @@ function BioreactorSimulator({ studentName, sessionKey, pin, studentId, location
 }
 
 export default function App() {
-  const [session] = useState({
-    name: "Guest Researcher",
-    sessionKey: "guest_session",
-    pin: "GUEST",
-    studentId: "GUEST-001",
-    locationData: { ip: "local", country: "Laboratory", city: "Simulation", latitude: "0", longitude: "0" },
-    trialType: "new_session",
-    entryTime: new Date().toISOString(),
-  });
-
+  const [session, setSession] = useState(null);
+  if (!session) return <LandingForm onAccessGranted={setSession} />;
   return (
     <BioreactorSimulator
       studentName={session.name}
