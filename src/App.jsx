@@ -2036,6 +2036,8 @@ function BioreactorSim({ sessionKey, onReset, trialType = "new_session", entryTi
             </div>
           </div>
 
+
+
           {/* AI Telemetry */}
           <div style={{ background: "#fafbfc", borderRadius: "4px", padding: "5px 8px", border: `1px solid ${bacterium.color}55`, flex: "0 0 auto" }}>
             <div style={{ fontSize: "8px", color: "#4a5a6a", letterSpacing: "0.10em", marginBottom: "4px", fontFamily: "'Inter','Segoe UI',sans-serif", fontWeight: "600" }}>BIOLOGICAL TELEMETRY</div>
